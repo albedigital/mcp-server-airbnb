@@ -699,7 +699,26 @@ const sseTransports: { [sessionId: string]: SSEServerTransport } = {};
 
 // Create Express app for HTTP server
 const app = express();
+
+// Middleware to preserve raw body for SSE transport
+app.use((req: any, res, next) => {
+  if (req.path === "/mcp" && req.method === "POST") {
+    let data = "";
+    req.on("data", (chunk: any) => {
+      data += chunk;
+    });
+    req.on("end", () => {
+      req.rawBody = data;
+      next();
+    });
+  } else {
+    next();
+  }
+});
+
 app.use(express.json());
+app.use(express.text()); // Add text parser for raw body
+app.use(express.raw({ type: "application/json" })); // Add raw parser for JSON
 
 // Handle SSE connections
 app.get("/mcp", (req, res) => {
@@ -715,11 +734,19 @@ app.get("/mcp", (req, res) => {
   console.log(`✅ Creating SSE transport for session: ${sessionId}`);
   const transport = new SSEServerTransport("/mcp", res);
   sseTransports[sessionId] = transport;
+  console.log(
+    `📊 Transport created, total sessions: ${Object.keys(sseTransports).length}`
+  );
 
   // Clean up transport when closed
   transport.onclose = () => {
     console.log(`🔌 SSE transport closed for session: ${sessionId}`);
     delete sseTransports[sessionId];
+    console.log(
+      `📊 Session removed, remaining sessions: ${
+        Object.keys(sseTransports).length
+      }`
+    );
   };
 
   // Connect to the MCP server
@@ -747,6 +774,15 @@ app.get("/mcp", (req, res) => {
 app.post("/mcp", async (req, res) => {
   const sessionId = req.headers["mcp-session-id"] as string;
   console.log(`📨 POST message received - SessionId: ${sessionId}`);
+  console.log(`📋 Request headers:`, JSON.stringify(req.headers, null, 2));
+  console.log(
+    `📦 Request body length: ${req.body ? JSON.stringify(req.body).length : 0}`
+  );
+  console.log(
+    `📦 Raw body length: ${
+      (req as any).rawBody ? (req as any).rawBody.length : 0
+    }`
+  );
 
   if (!sessionId || !sseTransports[sessionId]) {
     console.error(`❌ Invalid or missing session ID: ${sessionId}`);
@@ -759,7 +795,31 @@ app.post("/mcp", async (req, res) => {
 
   console.log(`✅ Processing POST message for session: ${sessionId}`);
   const transport = sseTransports[sessionId];
+
+  // Set proper headers for SSE
+  res.setHeader("Content-Type", "text/plain");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+
   try {
+    console.log(`🔄 Calling transport.handlePostMessage...`);
+    console.log(`📊 Request readable: ${req.readable}`);
+    console.log(`📊 Response writable: ${res.writable}`);
+
+    // Ensure request body is properly parsed
+    if (req.body && typeof req.body === "string") {
+      console.log(`📄 Request body (string): ${req.body.substring(0, 200)}...`);
+    } else if (req.body) {
+      console.log(
+        `📄 Request body (object): ${JSON.stringify(req.body).substring(
+          0,
+          200
+        )}...`
+      );
+    } else {
+      console.log(`📄 Request body: undefined or empty`);
+    }
+
     await transport.handlePostMessage(req, res);
     console.log(
       `✅ POST message processed successfully for session: ${sessionId}`
@@ -769,7 +829,15 @@ app.post("/mcp", async (req, res) => {
       `❌ Error processing POST message for session ${sessionId}:`,
       error
     );
-    res.status(500).send("Internal server error");
+    console.error(
+      `❌ Error details:`,
+      error instanceof Error ? error.stack : error
+    );
+
+    // Don't send error response if headers already sent
+    if (!res.headersSent) {
+      res.status(500).send("Internal server error");
+    }
   }
 });
 
