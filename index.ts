@@ -614,7 +614,7 @@ app.get("/mcp", (req, res) => {
   server
     .connect(transport)
     .then(() => {
-      transport.start();
+      // transport.start() is called automatically by server.connect()
     })
     .catch((error) => {
       console.error("Error connecting transport:", error);
