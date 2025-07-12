@@ -45,6 +45,65 @@ MCP Server for searching Airbnb and get listing details.
 
 ## Setup
 
+### Running the Server
+
+The server supports two modes:
+
+#### 1. Stdio Mode (Default)
+```bash
+# Run with stdio transport (for local MCP clients)
+node dist/index.js
+
+# Run with robots.txt ignored
+node dist/index.js --ignore-robots-txt
+```
+
+#### 2. HTTP Mode (For Remote Connections)
+```bash
+# Run HTTP server on default port 3000
+node dist/index.js --http
+
+# Run HTTP server on custom port
+node dist/index.js --http --port=8080
+
+# Run HTTP server with robots.txt ignored
+node dist/index.js --http --ignore-robots-txt
+```
+
+### Connecting from Another Server
+
+When running in HTTP mode, you can connect from another server using the SSE transport:
+
+**JavaScript/TypeScript:**
+```javascript
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+
+const transport = new SSEClientTransport({
+  serverUrl: "http://your-server:3000/mcp",
+  sessionId: "your-session-id"
+});
+
+const client = new Client({
+  name: "airbnb-client",
+  version: "1.0.0"
+});
+
+await client.connect(transport);
+```
+
+**Python:**
+```python
+from mcp import Client, SSEClientTransport
+
+transport = SSEClientTransport(
+    server_url="http://your-server:3000/mcp",
+    session_id="your-session-id"
+)
+
+client = Client("airbnb-client", "1.0.0")
+await client.connect(transport)
+```
 
 ### Installing on Claude Desktop
 Before starting make sure [Node.js](https://nodejs.org/) is installed on your desktop for `npx` to work.

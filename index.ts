@@ -2,138 +2,139 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
   Tool,
   McpError,
   ErrorCode,
-  isInitializeRequest,
+  InitializeRequest,
 } from "@modelcontextprotocol/sdk/types.js";
 import fetch from "node-fetch";
 import * as cheerio from "cheerio";
 import { cleanObject, flattenArraysInObject, pickBySchema } from "./util.js";
 import robotsParser from "robots-parser";
 import express from "express";
-import { randomUUID } from "node:crypto";
+import { createServer } from "node:http";
 
 // Tool definitions
 const AIRBNB_SEARCH_TOOL: Tool = {
   name: "airbnb_search",
-  description: "Search for Airbnb listings with various filters and pagination. Provide direct links to the user",
+  description:
+    "Search for Airbnb listings with various filters and pagination. Provide direct links to the user",
   inputSchema: {
     type: "object",
     properties: {
       location: {
         type: "string",
-        description: "Location to search for (city, state, etc.)"
+        description: "Location to search for (city, state, etc.)",
       },
       placeId: {
         type: "string",
-        description: "Google Maps Place ID (overrides the location parameter)"
+        description: "Google Maps Place ID (overrides the location parameter)",
       },
       checkin: {
         type: "string",
-        description: "Check-in date (YYYY-MM-DD)"
+        description: "Check-in date (YYYY-MM-DD)",
       },
       checkout: {
         type: "string",
-        description: "Check-out date (YYYY-MM-DD)"
+        description: "Check-out date (YYYY-MM-DD)",
       },
       adults: {
         type: "number",
-        description: "Number of adults"
+        description: "Number of adults",
       },
       children: {
         type: "number",
-        description: "Number of children"
+        description: "Number of children",
       },
       infants: {
         type: "number",
-        description: "Number of infants"
+        description: "Number of infants",
       },
       pets: {
         type: "number",
-        description: "Number of pets"
+        description: "Number of pets",
       },
       minPrice: {
         type: "number",
-        description: "Minimum price for the stay"
+        description: "Minimum price for the stay",
       },
       maxPrice: {
         type: "number",
-        description: "Maximum price for the stay"
+        description: "Maximum price for the stay",
       },
       cursor: {
         type: "string",
-        description: "Base64-encoded string used for Pagination"
+        description: "Base64-encoded string used for Pagination",
       },
       ignoreRobotsText: {
         type: "boolean",
-        description: "Ignore robots.txt rules for this request"
-      }
+        description: "Ignore robots.txt rules for this request",
+      },
     },
-    required: ["location"]
-  }
+    required: ["location"],
+  },
 };
 
 const AIRBNB_LISTING_DETAILS_TOOL: Tool = {
   name: "airbnb_listing_details",
-  description: "Get detailed information about a specific Airbnb listing. Provide direct links to the user",
+  description:
+    "Get detailed information about a specific Airbnb listing. Provide direct links to the user",
   inputSchema: {
     type: "object",
     properties: {
       id: {
         type: "string",
-        description: "The Airbnb listing ID"
+        description: "The Airbnb listing ID",
       },
       checkin: {
         type: "string",
-        description: "Check-in date (YYYY-MM-DD)"
+        description: "Check-in date (YYYY-MM-DD)",
       },
       checkout: {
         type: "string",
-        description: "Check-out date (YYYY-MM-DD)"
+        description: "Check-out date (YYYY-MM-DD)",
       },
       adults: {
         type: "number",
-        description: "Number of adults"
+        description: "Number of adults",
       },
       children: {
         type: "number",
-        description: "Number of children"
+        description: "Number of children",
       },
       infants: {
         type: "number",
-        description: "Number of infants"
+        description: "Number of infants",
       },
       pets: {
         type: "number",
-        description: "Number of pets"
+        description: "Number of pets",
       },
       ignoreRobotsText: {
         type: "boolean",
-        description: "Ignore robots.txt rules for this request"
-      }
+        description: "Ignore robots.txt rules for this request",
+      },
     },
-    required: ["id"]
-  }
+    required: ["id"],
+  },
 };
 
-const AIRBNB_TOOLS = [
-  AIRBNB_SEARCH_TOOL,
-  AIRBNB_LISTING_DETAILS_TOOL,
-] as const;
+const AIRBNB_TOOLS = [AIRBNB_SEARCH_TOOL, AIRBNB_LISTING_DETAILS_TOOL] as const;
 
 // Utility functions
-const USER_AGENT = "ModelContextProtocol/1.0 (Autonomous; +https://github.com/modelcontextprotocol/servers)";
+const USER_AGENT =
+  "ModelContextProtocol/1.0 (Autonomous; +https://github.com/modelcontextprotocol/servers)";
 const BASE_URL = "https://www.airbnb.com";
 
 const args = process.argv.slice(2);
 const IGNORE_ROBOTS_TXT = args.includes("--ignore-robots-txt");
 
-const robotsErrorMessage = "This path is disallowed by Airbnb's robots.txt to this User-agent. You may or may not want to run the server with '--ignore-robots-txt' args"
+const robotsErrorMessage =
+  "This path is disallowed by Airbnb's robots.txt to this User-agent. You may or may not want to run the server with '--ignore-robots-txt' args";
 let robotsTxtContent = "";
 
 // Simple robots.txt fetch
@@ -151,7 +152,7 @@ async function fetchRobotsTxt() {
   }
 }
 
-function isPathAllowed(path: string) {  
+function isPathAllowed(path: string) {
   if (!robotsTxtContent) {
     return true; // If we couldn't fetch robots.txt, assume allowed
   }
@@ -161,7 +162,7 @@ function isPathAllowed(path: string) {
     console.error(robotsErrorMessage);
     return false;
   }
-  
+
   return true;
 }
 
@@ -192,21 +193,23 @@ async function handleAirbnbSearch(params: any) {
   } = params;
 
   // Build search URL
-  const searchUrl = new URL(`${BASE_URL}/s/${encodeURIComponent(location)}/homes`);
-  
+  const searchUrl = new URL(
+    `${BASE_URL}/s/${encodeURIComponent(location)}/homes`
+  );
+
   // Add placeId
   if (placeId) searchUrl.searchParams.append("place_id", placeId);
-  
+
   // Add query parameters
   if (checkin) searchUrl.searchParams.append("checkin", checkin);
   if (checkout) searchUrl.searchParams.append("checkout", checkout);
-  
+
   // Add guests
   const adults_int = parseInt(adults.toString());
   const children_int = parseInt(children.toString());
   const infants_int = parseInt(infants.toString());
   const pets_int = parseInt(pets.toString());
-  
+
   const totalGuests = adults_int + children_int;
   if (totalGuests > 0) {
     searchUrl.searchParams.append("adults", adults_int.toString());
@@ -214,11 +217,11 @@ async function handleAirbnbSearch(params: any) {
     searchUrl.searchParams.append("infants", infants_int.toString());
     searchUrl.searchParams.append("pets", pets_int.toString());
   }
-  
+
   // Add price range
   if (minPrice) searchUrl.searchParams.append("price_min", minPrice.toString());
   if (maxPrice) searchUrl.searchParams.append("price_max", maxPrice.toString());
-  
+
   // Add room type
   // if (roomType) {
   //   const roomTypeParam = roomType.toLowerCase().replace(/\s+/g, '_');
@@ -234,19 +237,25 @@ async function handleAirbnbSearch(params: any) {
   const path = searchUrl.pathname + searchUrl.search;
   if (!ignoreRobotsText && !isPathAllowed(path)) {
     return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          error: robotsErrorMessage,
-          url: searchUrl.toString()
-        }, null, 2)
-      }],
-      isError: true
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              error: robotsErrorMessage,
+              url: searchUrl.toString(),
+            },
+            null,
+            2
+          ),
+        },
+      ],
+      isError: true,
     };
   }
 
   const allowSearchResultSchema: Record<string, any> = {
-    demandStayListing : {
+    demandStayListing: {
       id: true,
       description: true,
       location: true,
@@ -256,16 +265,16 @@ async function handleAirbnbSearch(params: any) {
     },
     structuredContent: {
       mapCategoryInfo: {
-        body: true
+        body: true,
       },
       mapSecondaryLine: {
-        body: true
+        body: true,
       },
       primaryLine: {
-        body: true
+        body: true,
       },
       secondaryLine: {
-        body: true
+        body: true,
       },
     },
     avgRatingA11yLabel: true,
@@ -282,10 +291,10 @@ async function handleAirbnbSearch(params: any) {
         priceDetails: {
           items: {
             description: true,
-            priceString: true
-          }
-        }
-      }
+            priceString: true,
+          },
+        },
+      },
     },
     // contextualPictures: {
     //   picture: true
@@ -296,47 +305,62 @@ async function handleAirbnbSearch(params: any) {
     const response = await fetchWithUserAgent(searchUrl.toString());
     const html = await response.text();
     const $ = cheerio.load(html);
-    
+
     let staysSearchResults = {};
-    
+
     try {
       const scriptElement = $("#data-deferred-state-0").first();
-      const clientData = JSON.parse($(scriptElement).text()).niobeClientData[0][1];
+      const clientData = JSON.parse($(scriptElement).text())
+        .niobeClientData[0][1];
       const results = clientData.data.presentation.staysSearch.results;
       cleanObject(results);
       staysSearchResults = {
         searchResults: results.searchResults
-          .map((result: any) => flattenArraysInObject(pickBySchema(result, allowSearchResultSchema)))
+          .map((result: any) =>
+            flattenArraysInObject(pickBySchema(result, allowSearchResultSchema))
+          )
           .map((result: any) => {
             const id = atob(result.demandStayListing.id).split(":")[1];
-            return {id, url: `${BASE_URL}/rooms/${id}`, ...result }
+            return { id, url: `${BASE_URL}/rooms/${id}`, ...result };
           }),
-        paginationInfo: results.paginationInfo
-      }
+        paginationInfo: results.paginationInfo,
+      };
     } catch (e) {
-        console.error(e);
+      console.error(e);
     }
 
     return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          searchUrl: searchUrl.toString(),
-          ...staysSearchResults
-        }, null, 2)
-      }],
-      isError: false
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              searchUrl: searchUrl.toString(),
+              ...staysSearchResults,
+            },
+            null,
+            2
+          ),
+        },
+      ],
+      isError: false,
     };
   } catch (error) {
     return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          error: error instanceof Error ? error.message : String(error),
-          searchUrl: searchUrl.toString()
-        }, null, 2)
-      }],
-      isError: true
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              error: error instanceof Error ? error.message : String(error),
+              searchUrl: searchUrl.toString(),
+            },
+            null,
+            2
+          ),
+        },
+      ],
+      isError: true,
     };
   }
 }
@@ -355,17 +379,17 @@ async function handleAirbnbListingDetails(params: any) {
 
   // Build listing URL
   const listingUrl = new URL(`${BASE_URL}/rooms/${id}`);
-  
+
   // Add query parameters
   if (checkin) listingUrl.searchParams.append("check_in", checkin);
   if (checkout) listingUrl.searchParams.append("check_out", checkout);
-  
+
   // Add guests
   const adults_int = parseInt(adults.toString());
   const children_int = parseInt(children.toString());
   const infants_int = parseInt(infants.toString());
   const pets_int = parseInt(pets.toString());
-  
+
   const totalGuests = adults_int + children_int;
   if (totalGuests > 0) {
     listingUrl.searchParams.append("adults", adults_int.toString());
@@ -378,51 +402,57 @@ async function handleAirbnbListingDetails(params: any) {
   const path = listingUrl.pathname + listingUrl.search;
   if (!ignoreRobotsText && !isPathAllowed(path)) {
     return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          error: robotsErrorMessage,
-          url: listingUrl.toString()
-        }, null, 2)
-      }],
-      isError: true
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              error: robotsErrorMessage,
+              url: listingUrl.toString(),
+            },
+            null,
+            2
+          ),
+        },
+      ],
+      isError: true,
     };
   }
 
   const allowSectionSchema: Record<string, any> = {
-    "LOCATION_DEFAULT": {
+    LOCATION_DEFAULT: {
       lat: true,
       lng: true,
       subtitle: true,
-      title: true
+      title: true,
     },
-    "POLICIES_DEFAULT": {
+    POLICIES_DEFAULT: {
       title: true,
       houseRulesSections: {
         title: true,
-        items : {
-          title: true
-        }
-      }
+        items: {
+          title: true,
+        },
+      },
     },
-    "HIGHLIGHTS_DEFAULT": {
+    HIGHLIGHTS_DEFAULT: {
       highlights: {
-        title: true
-      }
+        title: true,
+      },
     },
-    "DESCRIPTION_DEFAULT": {
+    DESCRIPTION_DEFAULT: {
       htmlDescription: {
-        htmlText: true
-      }
+        htmlText: true,
+      },
     },
-    "AMENITIES_DEFAULT": {
+    AMENITIES_DEFAULT: {
       title: true,
       seeAllAmenitiesGroups: {
         title: true,
         amenities: {
-          title: true
-        }
-      }
+          title: true,
+        },
+      },
     },
     //"AVAILABLITY_CALENDAR_DEFAULT": true,
   };
@@ -431,46 +461,67 @@ async function handleAirbnbListingDetails(params: any) {
     const response = await fetchWithUserAgent(listingUrl.toString());
     const html = await response.text();
     const $ = cheerio.load(html);
-    
+
     let details = {};
-    
+
     try {
       const scriptElement = $("#data-deferred-state-0").first();
-      const clientData = JSON.parse($(scriptElement).text()).niobeClientData[0][1];
-      const sections = clientData.data.presentation.stayProductDetailPage.sections.sections;
+      const clientData = JSON.parse($(scriptElement).text())
+        .niobeClientData[0][1];
+      const sections =
+        clientData.data.presentation.stayProductDetailPage.sections.sections;
       sections.forEach((section: any) => cleanObject(section));
       details = sections
-        .filter((section: any) => allowSectionSchema.hasOwnProperty(section.sectionId))
+        .filter((section: any) =>
+          allowSectionSchema.hasOwnProperty(section.sectionId)
+        )
         .map((section: any) => {
           return {
             id: section.sectionId,
-            ...flattenArraysInObject(pickBySchema(section.section, allowSectionSchema[section.sectionId]))
-          }
+            ...flattenArraysInObject(
+              pickBySchema(
+                section.section,
+                allowSectionSchema[section.sectionId]
+              )
+            ),
+          };
         });
     } catch (e) {
-        console.error(e);
+      console.error(e);
     }
 
     return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          listingUrl: listingUrl.toString(),
-          details: details
-        }, null, 2)
-      }],
-      isError: false
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              listingUrl: listingUrl.toString(),
+              details: details,
+            },
+            null,
+            2
+          ),
+        },
+      ],
+      isError: false,
     };
   } catch (error) {
     return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          error: error instanceof Error ? error.message : String(error),
-          listingUrl: listingUrl.toString()
-        }, null, 2)
-      }],
-      isError: true
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              error: error instanceof Error ? error.message : String(error),
+              listingUrl: listingUrl.toString(),
+            },
+            null,
+            2
+          ),
+        },
+      ],
+      isError: true,
     };
   }
 }
@@ -485,11 +536,13 @@ const server = new Server(
     capabilities: {
       tools: {},
     },
-  },
+  }
 );
 
 console.error(
-  `Server started with options: ${IGNORE_ROBOTS_TXT ? "ignore-robots-txt" : "respect-robots-txt"}`
+  `Server started with options: ${
+    IGNORE_ROBOTS_TXT ? "ignore-robots-txt" : "respect-robots-txt"
+  }`
 );
 
 // Set up request handlers
@@ -521,100 +574,91 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
   } catch (error) {
     return {
-      content: [{
-        type: "text",
-        text: `Error: ${error instanceof Error ? error.message : String(error)}`
-      }],
-      isError: true
+      content: [
+        {
+          type: "text",
+          text: `Error: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        },
+      ],
+      isError: true,
     };
   }
 });
 
+// Map to store SSE transports by session ID
+const sseTransports: { [sessionId: string]: SSEServerTransport } = {};
+
+// Create Express app for HTTP server
 const app = express();
 app.use(express.json());
 
-// Map to store transports by session ID
-const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {};
-
-// Handle POST requests for client-to-server communication
-app.post('/mcp', async (req, res) => {
-  // Check for existing session ID
-  const sessionId = req.headers['mcp-session-id'] as string | undefined;
-  let transport: StreamableHTTPServerTransport;
-
-  if (sessionId && transports[sessionId]) {
-    // Reuse existing transport
-    transport = transports[sessionId];
-  } else if (!sessionId && isInitializeRequest(req.body)) {
-    // New initialization request
-    transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-      onsessioninitialized: (sessionId) => {
-        // Store the transport by session ID
-        transports[sessionId] = transport;
-      },
-      // DNS rebinding protection is disabled by default for backwards compatibility. If you are running this server
-      // locally, make sure to set:
-      // enableDnsRebindingProtection: true,
-      // allowedHosts: ['127.0.0.1'],
-    });
-
-    // Clean up transport when closed
-    transport.onclose = () => {
-      if (transport.sessionId) {
-        delete transports[transport.sessionId];
-      }
-    };
-
-    // Connect to the MCP server
-    await server.connect(transport);
-  } else {
-    // Invalid request
-    res.status(400).json({
-      jsonrpc: '2.0',
-      error: {
-        code: -32000,
-        message: 'Bad Request: No valid session ID provided',
-      },
-      id: null,
-    });
+// Handle SSE connections
+app.get("/mcp", (req, res) => {
+  const sessionId = req.query.sessionId as string;
+  if (!sessionId) {
+    res.status(400).send("Missing sessionId parameter");
     return;
   }
 
-  // Handle the request
-  await transport.handleRequest(req, res, req.body);
+  const transport = new SSEServerTransport("/mcp", res);
+  sseTransports[sessionId] = transport;
+
+  // Clean up transport when closed
+  transport.onclose = () => {
+    delete sseTransports[sessionId];
+  };
+
+  // Connect to the MCP server
+  server
+    .connect(transport)
+    .then(() => {
+      transport.start();
+    })
+    .catch((error) => {
+      console.error("Error connecting transport:", error);
+      res.status(500).send("Internal server error");
+    });
 });
 
-// Reusable handler for GET and DELETE requests
-const handleSessionRequest = async (req: express.Request, res: express.Response) => {
-  const sessionId = req.headers['mcp-session-id'] as string | undefined;
-  if (!sessionId || !transports[sessionId]) {
-    res.status(400).send('Invalid or missing session ID');
+// Handle POST messages to SSE transports
+app.post("/mcp", async (req, res) => {
+  const sessionId = req.headers["mcp-session-id"] as string;
+  if (!sessionId || !sseTransports[sessionId]) {
+    res.status(400).send("Invalid or missing session ID");
     return;
   }
-  
-  const transport = transports[sessionId];
-  await transport.handleRequest(req, res);
-};
 
-// Handle GET requests for server-to-client notifications via SSE
-app.get('/mcp', handleSessionRequest);
-
-// Handle DELETE requests for session termination
-app.delete('/mcp', handleSessionRequest);
+  const transport = sseTransports[sessionId];
+  await transport.handlePostMessage(req, res);
+});
 
 async function runServer() {
-  // const transport = new StdioServerTransport();
-  // await server.connect(transport);
-  // console.error("Airbnb MCP Server running on stdio");
-  app.listen(3000, () => {
-    console.error("Airbnb MCP Server running on http://localhost:3000");
-  });
+  const args = process.argv.slice(2);
+  const useHttp = args.includes("--http");
+  const port = parseInt(
+    args.find((arg) => arg.startsWith("--port="))?.split("=")[1] || "3000"
+  );
+
+  if (useHttp) {
+    // Run HTTP server
+    const httpServer = createServer(app);
+    httpServer.listen(port, () => {
+      console.error(`Airbnb MCP Server running on HTTP port ${port}`);
+      console.error(
+        `Connect via SSE at: http://localhost:${port}/mcp?sessionId=<your-session-id>`
+      );
+    });
+  } else {
+    // Run stdio server (default)
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.error("Airbnb MCP Server running on stdio");
+  }
 }
 
 runServer().catch((error) => {
   console.error("Fatal error running server:", error);
   process.exit(1);
 });
-
-
