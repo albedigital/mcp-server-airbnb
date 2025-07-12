@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  airbnb-mcp:
+    build: .
+    container_name: airbnb-mcp-server
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
+    command: ["node", "dist/index.js", "--http", "--port=3000"]
+    # Optional: Add --ignore-robots-txt for testing
+    # command: ["node", "dist/index.js", "--http", "--port=3000", "--ignore-robots-txt"] 

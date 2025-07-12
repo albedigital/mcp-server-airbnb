@@ -13,5 +13,8 @@ COPY . .
 # Build the project explicitly
 RUN npm run build
 
-# Expose the MCP server on stdio
-CMD [ "node", "dist/index.js" ]
+# Expose port for HTTP mode
+EXPOSE 3000
+
+# Default to HTTP mode for Docker deployments
+CMD [ "node", "dist/index.js", "--http", "--port=3000" ]

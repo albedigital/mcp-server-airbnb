@@ -641,20 +641,24 @@ async function runServer() {
     args.find((arg) => arg.startsWith("--port="))?.split("=")[1] || "3000"
   );
 
+  console.error(`Starting server with args: ${args.join(" ")}`);
+  console.error(`HTTP mode: ${useHttp}, Port: ${port}`);
+
   if (useHttp) {
     // Run HTTP server
     const httpServer = createServer(app);
     httpServer.listen(port, () => {
-      console.error(`Airbnb MCP Server running on HTTP port ${port}`);
+      console.error(`✅ Airbnb MCP Server running on HTTP port ${port}`);
       console.error(
-        `Connect via SSE at: http://localhost:${port}/mcp?sessionId=<your-session-id>`
+        `🌐 Connect via SSE at: http://localhost:${port}/mcp?sessionId=<your-session-id>`
       );
+      console.error(`📡 Server is ready to accept connections!`);
     });
   } else {
     // Run stdio server (default)
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error("Airbnb MCP Server running on stdio");
+    console.error("✅ Airbnb MCP Server running on stdio");
   }
 }
 

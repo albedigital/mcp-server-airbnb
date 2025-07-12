@@ -105,6 +105,39 @@ client = Client("airbnb-client", "1.0.0")
 await client.connect(transport)
 ```
 
+### Docker Deployment
+
+#### Quick Start with Docker Compose
+```bash
+# Build and run with docker-compose
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop the server
+docker-compose down
+```
+
+#### Manual Docker Deployment
+```bash
+# Build the image
+docker build -t airbnb-mcp-server .
+
+# Run in HTTP mode (recommended for server deployment)
+docker run -d -p 3000:3000 --name airbnb-mcp airbnb-mcp-server
+
+# Run with custom port
+docker run -d -p 8080:3000 --name airbnb-mcp airbnb-mcp-server node dist/index.js --http --port=3000
+
+# Run with robots.txt ignored (for testing)
+docker run -d -p 3000:3000 --name airbnb-mcp airbnb-mcp-server node dist/index.js --http --port=3000 --ignore-robots-txt
+```
+
+#### Environment Variables
+- `NODE_ENV`: Set to `production` for production deployments
+- `PORT`: Override the default port (3000)
+
 ### Installing on Claude Desktop
 Before starting make sure [Node.js](https://nodejs.org/) is installed on your desktop for `npx` to work.
 1. Go to: Settings > Developer > Edit Config
