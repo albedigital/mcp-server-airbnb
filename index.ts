@@ -301,7 +301,7 @@ async function handleAirbnbSearch(params: any) {
     
     try {
       const scriptElement = $("#data-deferred-state-0").first();
-      const clientData = JSON.parse($(scriptElement).text()).niobeMinimalClientData[0][1];
+      const clientData = JSON.parse($(scriptElement).text()).niobeClientData[0][1];
       const results = clientData.data.presentation.staysSearch.results;
       cleanObject(results);
       staysSearchResults = {
@@ -436,7 +436,7 @@ async function handleAirbnbListingDetails(params: any) {
     
     try {
       const scriptElement = $("#data-deferred-state-0").first();
-      const clientData = JSON.parse($(scriptElement).text()).niobeMinimalClientData[0][1];
+      const clientData = JSON.parse($(scriptElement).text()).niobeClientData[0][1];
       const sections = clientData.data.presentation.stayProductDetailPage.sections.sections;
       sections.forEach((section: any) => cleanObject(section));
       details = sections
