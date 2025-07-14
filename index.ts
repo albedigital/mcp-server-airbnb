@@ -513,12 +513,8 @@ async function handleAirbnbListingDetails(params: any) {
         },
       },
     },
-    PRICE_DEFAULT: {
-      price: {
-        accessibilityLabel: true,
-      },
-    },
-    AVAILABLITY_CALENDAR_DEFAULT: true,
+    HERO_DEFAULT: true,
+    BOOK_IT_SIDEBAR: true,
   };
 
   try {
