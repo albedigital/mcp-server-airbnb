@@ -4,31 +4,11 @@ services:
   airbnb-mcp:
     build: .
     container_name: airbnb-mcp-server
-    # Don't expose port directly - nginx will handle external access
-    expose:
-      - "3000"
+    ports:
+      - "3000:3000"
     environment:
       - NODE_ENV=production
     restart: unless-stopped
     command: ["node", "dist/index.js", "--http", "--port=3000"]
     # Optional: Add --ignore-robots-txt for testing
-    # command: ["node", "dist/index.js", "--http", "--port=3000", "--ignore-robots-txt"]
-    networks:
-      - mcp-network
-
-  nginx:
-    image: nginx:alpine
-    container_name: airbnb-mcp-nginx
-    ports:
-      - "8080:80"  # Expose nginx on host port 8080
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-    depends_on:
-      - airbnb-mcp
-    restart: unless-stopped
-    networks:
-      - mcp-network
-
-networks:
-  mcp-network:
-    driver: bridge 
+    # command: ["node", "dist/index.js", "--http", "--port=3000", "--ignore-robots-txt"] 

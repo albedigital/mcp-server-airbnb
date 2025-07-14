@@ -700,31 +700,9 @@ const sseTransports: { [sessionId: string]: SSEServerTransport } = {};
 // Create Express app for HTTP server
 const app = express();
 
-// Skip body parsing for MCP POST requests to preserve the stream
-app.use((req: any, res, next) => {
-  if (req.path === "/mcp" && req.method === "POST") {
-    // Skip body parsing for MCP requests to preserve the stream
-    next();
-  } else {
-    next();
-  }
-});
+// IMPORTANT: Do NOT apply any global body parsers. We'll handle manually per-route.
 
-// Body parsing middleware that skips MCP requests
-app.use((req: any, res, next) => {
-  if (req.path === "/mcp" && req.method === "POST") {
-    // Skip body parsing for MCP requests
-    next();
-  } else {
-    // Apply body parsing for other requests
-    express.json()(req, res, next);
-  }
-});
-
-app.use(express.text()); // Add text parser for raw body
-app.use(express.raw({ type: "application/json" })); // Add raw parser for JSON
-
-// Handle SSE connections
+// Handle SSE connections (GET /mcp) - this remains unchanged
 app.get("/mcp", (req, res) => {
   const sessionId = req.query.sessionId as string;
   console.log(`🔗 New SSE connection request - SessionId: ${sessionId}`);
@@ -763,7 +741,6 @@ app.get("/mcp", (req, res) => {
       console.log(
         `✅ Transport connected successfully for session: ${sessionId}`
       );
-      // transport.start() is called automatically by server.connect()
     })
     .catch((error) => {
       console.error(
@@ -774,40 +751,69 @@ app.get("/mcp", (req, res) => {
     });
 });
 
-// Handle POST messages to SSE transports
-app.post("/mcp", async (req, res) => {
+// Handle POST messages to SSE transports (POST /mcp)
+app.post("/mcp", (req, res) => {
   const sessionId = req.headers["mcp-session-id"] as string;
   console.log(`📨 POST message received - SessionId: ${sessionId}`);
   console.log(`📋 Request headers:`, JSON.stringify(req.headers, null, 2));
 
-  // Manually parse the body for MCP requests
+  if (!sessionId || !sseTransports[sessionId]) {
+    console.error(`❌ Invalid or missing session ID: ${sessionId}`);
+    console.log(
+      `📊 Available sessions: ${Object.keys(sseTransports).join(", ")}`
+    );
+    res.status(400).send("Invalid or missing session ID");
+    return;
+  }
+
+  console.log(`✅ Processing POST message for session: ${sessionId}`);
+  const transport = sseTransports[sessionId];
+
+  // Set proper headers for response
+  res.setHeader("Content-Type", "text/plain");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+
+  // Manually read the body stream
   let bodyData = "";
   req.on("data", (chunk: any) => {
     bodyData += chunk;
+    console.log(`📥 Received data chunk: ${chunk.length} bytes`);
   });
 
   req.on("end", async () => {
-    console.log(`📦 Request body length: ${bodyData.length}`);
+    console.log(
+      `📦 Request body fully received - Length: ${bodyData.length} bytes`
+    );
     console.log(`📄 Request body content: ${bodyData.substring(0, 200)}...`);
 
     try {
       const parsedBody = JSON.parse(bodyData);
       console.log(`✅ Successfully parsed request body`);
 
-      // Process the request with parsed body
-      await processMcpRequest(req, res, sessionId, parsedBody);
+      // Set the parsed body on the original request object
+      (req as any).body = parsedBody;
+
+      // Pass to transport handler
+      console.log(`🔄 Calling transport.handlePostMessage...`);
+      await transport.handlePostMessage(req, res);
+      console.log(
+        `✅ POST message processed successfully for session: ${sessionId}`
+      );
     } catch (parseError) {
-      console.error(`❌ Error parsing request body:`, parseError);
-      res.status(400).send("Invalid JSON in request body");
+      console.error(`❌ Error parsing or processing request body:`, parseError);
+      if (!res.headersSent) {
+        res.status(400).send("Invalid JSON in request body");
+      }
     }
   });
 
   req.on("error", (error: unknown) => {
     console.error(`❌ Request stream error:`, error);
-    res.status(500).send("Request stream error");
+    if (!res.headersSent) {
+      res.status(500).send("Request stream error");
+    }
   });
-
-  return; // Exit early, processing will continue in the 'end' event
 });
 
 // Helper function to process MCP requests
@@ -881,10 +887,6 @@ async function runServer() {
     // Run HTTP server
     console.log("🔧 Setting up HTTP server...");
     const httpServer = createServer(app);
-    // Set long timeouts for SSE/long polling
-    httpServer.timeout = 3600 * 1000; // 1 hour
-    httpServer.keepAliveTimeout = 65000; // 65 seconds
-    httpServer.headersTimeout = 66000; // 66 seconds
     httpServer.listen(port, () => {
       console.error(`✅ Airbnb MCP Server running on HTTP port ${port}`);
       console.error(
@@ -892,9 +894,6 @@ async function runServer() {
       );
       console.error(`📡 Server is ready to accept connections!`);
       console.log(`📊 Active sessions: ${Object.keys(sseTransports).length}`);
-      console.log(
-        `⏱️ Server timeouts: ${httpServer.timeout}ms, keepAlive: ${httpServer.keepAliveTimeout}ms`
-      );
     });
   } else {
     // Run stdio server (default)
