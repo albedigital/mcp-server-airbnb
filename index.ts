@@ -881,6 +881,10 @@ async function runServer() {
     // Run HTTP server
     console.log("🔧 Setting up HTTP server...");
     const httpServer = createServer(app);
+    // Set long timeouts for SSE/long polling
+    httpServer.timeout = 3600 * 1000; // 1 hour
+    httpServer.keepAliveTimeout = 65000; // 65 seconds
+    httpServer.headersTimeout = 66000; // 66 seconds
     httpServer.listen(port, () => {
       console.error(`✅ Airbnb MCP Server running on HTTP port ${port}`);
       console.error(
@@ -888,6 +892,9 @@ async function runServer() {
       );
       console.error(`📡 Server is ready to accept connections!`);
       console.log(`📊 Active sessions: ${Object.keys(sseTransports).length}`);
+      console.log(
+        `⏱️ Server timeouts: ${httpServer.timeout}ms, keepAlive: ${httpServer.keepAliveTimeout}ms`
+      );
     });
   } else {
     // Run stdio server (default)
