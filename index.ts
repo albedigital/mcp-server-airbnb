@@ -565,6 +565,7 @@ async function handleAirbnbListingDetails(params: any) {
       console.log(`📋 Found ${sections?.length || 0} sections`);
 
       sections.forEach((section: any) => cleanObject(section));
+      console.log("###SECTIONS", sections);
       details = sections
         .filter((section: any) =>
           allowSectionSchema.hasOwnProperty(section.sectionId)
