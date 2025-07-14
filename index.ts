@@ -16,7 +16,7 @@ import * as cheerio from "cheerio";
 import { cleanObject, flattenArraysInObject, pickBySchema } from "./util.js";
 import robotsParser from "robots-parser";
 import express from "express";
-import { createServer } from "node:http";
+import { createServer, IncomingMessage } from "node:http";
 
 // Tool definitions
 const AIRBNB_SEARCH_TOOL: Tool = {
@@ -769,51 +769,31 @@ app.post("/mcp", (req, res) => {
   console.log(`✅ Processing POST message for session: ${sessionId}`);
   const transport = sseTransports[sessionId];
 
-  // Set proper headers for response
-  res.setHeader("Content-Type", "text/plain");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-
-  // Manually read the body stream
-  let bodyData = "";
-  req.on("data", (chunk: any) => {
-    bodyData += chunk;
-    console.log(`📥 Received data chunk: ${chunk.length} bytes`);
-  });
-
-  req.on("end", async () => {
-    console.log(
-      `📦 Request body fully received - Length: ${bodyData.length} bytes`
-    );
-    console.log(`📄 Request body content: ${bodyData.substring(0, 200)}...`);
-
-    try {
-      const parsedBody = JSON.parse(bodyData);
-      console.log(`✅ Successfully parsed request body`);
-
-      // Set the parsed body on the original request object
-      (req as any).body = parsedBody;
-
-      // Pass to transport handler
-      console.log(`🔄 Calling transport.handlePostMessage...`);
-      await transport.handlePostMessage(req, res);
-      console.log(
-        `✅ POST message processed successfully for session: ${sessionId}`
-      );
-    } catch (parseError) {
-      console.error(`❌ Error parsing or processing request body:`, parseError);
-      if (!res.headersSent) {
-        res.status(400).send("Invalid JSON in request body");
-      }
-    }
-  });
-
-  req.on("error", (error: unknown) => {
-    console.error(`❌ Request stream error:`, error);
+  try {
+    console.log(`🔄 Calling transport.handlePostMessage...`);
+    // Let the transport handle the request directly - it will read the body itself
+    transport
+      .handlePostMessage(req, res)
+      .then(() => {
+        console.log(
+          `✅ POST message processed successfully for session: ${sessionId}`
+        );
+      })
+      .catch((error) => {
+        console.error(
+          `❌ Error processing POST message for session ${sessionId}:`,
+          error
+        );
+        if (!res.headersSent) {
+          res.status(500).send("Internal server error");
+        }
+      });
+  } catch (error) {
+    console.error(`❌ Error in POST handler for session ${sessionId}:`, error);
     if (!res.headersSent) {
-      res.status(500).send("Request stream error");
+      res.status(500).send("Internal server error");
     }
-  });
+  }
 });
 
 // Helper function to process MCP requests
