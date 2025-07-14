@@ -700,23 +700,27 @@ const sseTransports: { [sessionId: string]: SSEServerTransport } = {};
 // Create Express app for HTTP server
 const app = express();
 
-// Middleware to preserve raw body for SSE transport
+// Skip body parsing for MCP POST requests to preserve the stream
 app.use((req: any, res, next) => {
   if (req.path === "/mcp" && req.method === "POST") {
-    let data = "";
-    req.on("data", (chunk: any) => {
-      data += chunk;
-    });
-    req.on("end", () => {
-      req.rawBody = data;
-      next();
-    });
+    // Skip body parsing for MCP requests to preserve the stream
+    next();
   } else {
     next();
   }
 });
 
-app.use(express.json());
+// Body parsing middleware that skips MCP requests
+app.use((req: any, res, next) => {
+  if (req.path === "/mcp" && req.method === "POST") {
+    // Skip body parsing for MCP requests
+    next();
+  } else {
+    // Apply body parsing for other requests
+    express.json()(req, res, next);
+  }
+});
+
 app.use(express.text()); // Add text parser for raw body
 app.use(express.raw({ type: "application/json" })); // Add raw parser for JSON
 
@@ -775,15 +779,44 @@ app.post("/mcp", async (req, res) => {
   const sessionId = req.headers["mcp-session-id"] as string;
   console.log(`📨 POST message received - SessionId: ${sessionId}`);
   console.log(`📋 Request headers:`, JSON.stringify(req.headers, null, 2));
-  console.log(
-    `📦 Request body length: ${req.body ? JSON.stringify(req.body).length : 0}`
-  );
-  console.log(
-    `📦 Raw body length: ${
-      (req as any).rawBody ? (req as any).rawBody.length : 0
-    }`
-  );
 
+  // Manually parse the body for MCP requests
+  let bodyData = "";
+  req.on("data", (chunk: any) => {
+    bodyData += chunk;
+  });
+
+  req.on("end", async () => {
+    console.log(`📦 Request body length: ${bodyData.length}`);
+    console.log(`📄 Request body content: ${bodyData.substring(0, 200)}...`);
+
+    try {
+      const parsedBody = JSON.parse(bodyData);
+      console.log(`✅ Successfully parsed request body`);
+
+      // Process the request with parsed body
+      await processMcpRequest(req, res, sessionId, parsedBody);
+    } catch (parseError) {
+      console.error(`❌ Error parsing request body:`, parseError);
+      res.status(400).send("Invalid JSON in request body");
+    }
+  });
+
+  req.on("error", (error: unknown) => {
+    console.error(`❌ Request stream error:`, error);
+    res.status(500).send("Request stream error");
+  });
+
+  return; // Exit early, processing will continue in the 'end' event
+});
+
+// Helper function to process MCP requests
+async function processMcpRequest(
+  req: any,
+  res: any,
+  sessionId: string,
+  parsedBody: any
+) {
   if (!sessionId || !sseTransports[sessionId]) {
     console.error(`❌ Invalid or missing session ID: ${sessionId}`);
     console.log(
@@ -806,21 +839,14 @@ app.post("/mcp", async (req, res) => {
     console.log(`📊 Request readable: ${req.readable}`);
     console.log(`📊 Response writable: ${res.writable}`);
 
-    // Ensure request body is properly parsed
-    if (req.body && typeof req.body === "string") {
-      console.log(`📄 Request body (string): ${req.body.substring(0, 200)}...`);
-    } else if (req.body) {
-      console.log(
-        `📄 Request body (object): ${JSON.stringify(req.body).substring(
-          0,
-          200
-        )}...`
-      );
-    } else {
-      console.log(`📄 Request body: undefined or empty`);
-    }
+    // Create a mock request object with the parsed body
+    const mockReq = {
+      ...req,
+      body: parsedBody,
+      readable: true,
+    };
 
-    await transport.handlePostMessage(req, res);
+    await transport.handlePostMessage(mockReq, res);
     console.log(
       `✅ POST message processed successfully for session: ${sessionId}`
     );
@@ -839,7 +865,7 @@ app.post("/mcp", async (req, res) => {
       res.status(500).send("Internal server error");
     }
   }
-});
+}
 
 async function runServer() {
   const args = process.argv.slice(2);
