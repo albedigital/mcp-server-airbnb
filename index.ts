@@ -114,6 +114,10 @@ const AIRBNB_LISTING_DETAILS_TOOL: Tool = {
         type: "number",
         description: "Number of pets",
       },
+      price: {
+        type: "number",
+        description: "Price for the stay",
+      },
       ignoreRobotsText: {
         type: "boolean",
         description: "Ignore robots.txt rules for this request",
@@ -509,7 +513,12 @@ async function handleAirbnbListingDetails(params: any) {
         },
       },
     },
-    //"AVAILABLITY_CALENDAR_DEFAULT": true,
+    PRICE_DEFAULT: {
+      price: {
+        accessibilityLabel: true,
+      },
+    },
+    AVAILABLITY_CALENDAR_DEFAULT: true,
   };
 
   try {
