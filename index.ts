@@ -131,7 +131,7 @@ const USER_AGENT =
 const BASE_URL = "https://www.airbnb.com";
 
 const args = process.argv.slice(2);
-const IGNORE_ROBOTS_TXT = args.includes("--ignore-robots-txt");
+const IGNORE_ROBOTS_TXT = true; // args.includes("--ignore-robots-txt");
 
 const robotsErrorMessage =
   "This path is disallowed by Airbnb's robots.txt to this User-agent. You may or may not want to run the server with '--ignore-robots-txt' args";
