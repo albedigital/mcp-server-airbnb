@@ -133,6 +133,7 @@ const AIRBNB_TOOLS = [AIRBNB_SEARCH_TOOL, AIRBNB_LISTING_DETAILS_TOOL] as const;
 const USER_AGENT =
   "ModelContextProtocol/1.0 (Autonomous; +https://github.com/modelcontextprotocol/servers)";
 const BASE_URL = "https://www.airbnb.com";
+const FETCH_TIMEOUT = 6000; // 6 seconds timeout
 
 const args = process.argv.slice(2);
 const IGNORE_ROBOTS_TXT = true; // args.includes("--ignore-robots-txt");
@@ -171,12 +172,65 @@ function isPathAllowed(path: string) {
 }
 
 async function fetchWithUserAgent(url: string) {
-  return fetch(url, {
-    headers: {
-      "User-Agent": USER_AGENT,
-      "Accept-Language": "en-US,en;q=0.9",
-    },
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": USER_AGENT,
+        "Accept-Language": "en-US,en;q=0.9",
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Cache-Control": "no-cache",
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw error;
+  }
+}
+
+// Helper function to wait for page to be ready
+async function waitForPageReady(
+  html: string,
+  maxRetries: number = 3
+): Promise<boolean> {
+  const $ = cheerio.load(html);
+  const scriptElement = $("#data-deferred-state-0").first();
+
+  if (scriptElement.length === 0) {
+    console.warn("⚠️ No script element found with data-deferred-state-0");
+    return false;
+  }
+
+  try {
+    const scriptContent = $(scriptElement).text();
+    if (!scriptContent || scriptContent.trim().length === 0) {
+      console.warn("⚠️ Script element found but content is empty");
+      return false;
+    }
+
+    // Try to parse the JSON to ensure it's valid
+    const parsedData = JSON.parse(scriptContent);
+    if (
+      !parsedData.niobeClientData ||
+      !parsedData.niobeClientData[0] ||
+      !parsedData.niobeClientData[0][1]
+    ) {
+      console.warn("⚠️ Script element found but data structure is invalid");
+      return false;
+    }
+
+    console.log("✅ Page data is ready and valid");
+    return true;
+  } catch (error) {
+    console.warn("⚠️ Error parsing script content:", error);
+    return false;
+  }
 }
 
 // API handlers
@@ -318,36 +372,46 @@ async function handleAirbnbSearch(params: any) {
     console.log(`📡 Fetching search results from: ${searchUrl.toString()}`);
     const response = await fetchWithUserAgent(searchUrl.toString());
     console.log(`📊 Response status: ${response.status}`);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
     const html = await response.text();
     console.log(`📄 HTML content length: ${html.length} characters`);
-    const $ = cheerio.load(html);
 
+    // Validate that the page is ready before parsing
+    console.log("🔍 Validating page readiness...");
+    const isPageReady = await waitForPageReady(html);
+    if (!isPageReady) {
+      console.error("❌ Page not ready or data not available");
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                error:
+                  "Page not ready or data not available. The page may not have loaded completely or the data structure has changed.",
+                searchUrl: searchUrl.toString(),
+                htmlLength: html.length,
+              },
+              null,
+              2
+            ),
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const $ = cheerio.load(html);
     let staysSearchResults = {};
 
     try {
       console.log("🔍 Parsing search results from HTML...");
       const scriptElement = $("#data-deferred-state-0").first();
       console.log(`📜 Found script element: ${scriptElement.length > 0}`);
-
-      if (scriptElement.length === 0) {
-        console.warn("⚠️ No script element found with data-deferred-state-0");
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(
-                {
-                  error: "Could not parse search results - no data found",
-                  searchUrl: searchUrl.toString(),
-                },
-                null,
-                2
-              ),
-            },
-          ],
-          isError: true,
-        };
-      }
 
       const clientData = JSON.parse($(scriptElement).text())
         .niobeClientData[0][1];
@@ -377,6 +441,23 @@ async function handleAirbnbSearch(params: any) {
       );
     } catch (e) {
       console.error("❌ Error parsing search results:", e);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                error: "Failed to parse search results",
+                details: e instanceof Error ? e.message : String(e),
+                searchUrl: searchUrl.toString(),
+              },
+              null,
+              2
+            ),
+          },
+        ],
+        isError: true,
+      };
     }
 
     return {
@@ -396,13 +477,26 @@ async function handleAirbnbSearch(params: any) {
       isError: false,
     };
   } catch (error) {
+    console.error("❌ Error in handleAirbnbSearch:", error);
+
+    let errorMessage = "Unknown error occurred";
+    if (error instanceof Error) {
+      if (error.name === "AbortError") {
+        errorMessage = `Request timed out after ${
+          FETCH_TIMEOUT / 1000
+        } seconds`;
+      } else {
+        errorMessage = error.message;
+      }
+    }
+
     return {
       content: [
         {
           type: "text",
           text: JSON.stringify(
             {
-              error: error instanceof Error ? error.message : String(error),
+              error: errorMessage,
               searchUrl: searchUrl.toString(),
             },
             null,
@@ -521,36 +615,46 @@ async function handleAirbnbListingDetails(params: any) {
     console.log(`📡 Fetching listing details from: ${listingUrl.toString()}`);
     const response = await fetchWithUserAgent(listingUrl.toString());
     console.log(`📊 Response status: ${response.status}`);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
     const html = await response.text();
     console.log(`📄 HTML content length: ${html.length} characters`);
-    const $ = cheerio.load(html);
 
+    // Validate that the page is ready before parsing
+    console.log("🔍 Validating page readiness...");
+    const isPageReady = await waitForPageReady(html);
+    if (!isPageReady) {
+      console.error("❌ Page not ready or data not available");
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                error:
+                  "Page not ready or data not available. The page may not have loaded completely or the data structure has changed.",
+                listingUrl: listingUrl.toString(),
+                htmlLength: html.length,
+              },
+              null,
+              2
+            ),
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const $ = cheerio.load(html);
     let details = {};
 
     try {
       console.log("🔍 Parsing listing details from HTML...");
       const scriptElement = $("#data-deferred-state-0").first();
       console.log(`📜 Found script element: ${scriptElement.length > 0}`);
-
-      if (scriptElement.length === 0) {
-        console.warn("⚠️ No script element found with data-deferred-state-0");
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(
-                {
-                  error: "Could not parse listing details - no data found",
-                  listingUrl: listingUrl.toString(),
-                },
-                null,
-                2
-              ),
-            },
-          ],
-          isError: true,
-        };
-      }
 
       const clientData = JSON.parse($(scriptElement).text())
         .niobeClientData[0][1];
@@ -580,6 +684,23 @@ async function handleAirbnbListingDetails(params: any) {
       console.log(`✅ Processed ${(details as any[]).length} sections`);
     } catch (e) {
       console.error("❌ Error parsing listing details:", e);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                error: "Failed to parse listing details",
+                details: e instanceof Error ? e.message : String(e),
+                listingUrl: listingUrl.toString(),
+              },
+              null,
+              2
+            ),
+          },
+        ],
+        isError: true,
+      };
     }
 
     return {
@@ -599,13 +720,26 @@ async function handleAirbnbListingDetails(params: any) {
       isError: false,
     };
   } catch (error) {
+    console.error("❌ Error in handleAirbnbListingDetails:", error);
+
+    let errorMessage = "Unknown error occurred";
+    if (error instanceof Error) {
+      if (error.name === "AbortError") {
+        errorMessage = `Request timed out after ${
+          FETCH_TIMEOUT / 1000
+        } seconds`;
+      } else {
+        errorMessage = error.message;
+      }
+    }
+
     return {
       content: [
         {
           type: "text",
           text: JSON.stringify(
             {
-              error: error instanceof Error ? error.message : String(error),
+              error: errorMessage,
               listingUrl: listingUrl.toString(),
             },
             null,
